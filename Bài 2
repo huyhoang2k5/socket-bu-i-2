@@ -1,0 +1,111 @@
+import java.io.*;
+import java.net.*;
+import java.util.*;
+import java.util.concurrent.*;
+
+public class ClientServerChat {
+    private static final int PORT = 9999;
+    private static final Set<ClientHandler> clientHandlers = Collections.synchronizedSet(new HashSet<>());
+
+    public static void main(String[] args) throws IOException {
+        BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
+        System.out.print("Chọn chế độ (server/client): ");
+        String mode = reader.readLine().trim().toLowerCase();
+
+        if (mode.equals("server")) {
+            startServer();
+        } else if (mode.equals("client")) {
+            startClient();
+        } else {
+            System.out.println("Chế độ không hợp lệ.");
+        }
+    }
+
+    public static void startServer() throws IOException {
+        ServerSocket serverSocket = new ServerSocket(PORT);
+        System.out.println("Server đang chạy và chờ kết nối từ client...");
+
+        ExecutorService pool = Executors.newFixedThreadPool(10);
+
+        while (true) {
+            Socket clientSocket = serverSocket.accept();
+            ClientHandler clientHandler = new ClientHandler(clientSocket);
+            clientHandlers.add(clientHandler);
+            pool.execute(clientHandler);
+        }
+    }
+
+    public static void startClient() {
+        try (Socket socket = new Socket("127.0.0.1", PORT);
+             BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+             PrintWriter out = new PrintWriter(socket.getOutputStream(), true);
+             BufferedReader stdIn = new BufferedReader(new InputStreamReader(System.in))) {
+
+            System.out.print("Nhập username: ");
+            String username = stdIn.readLine();
+            out.println(username);
+
+            Thread readerThread = new Thread(() -> {
+                try {
+                    String fromServer;
+                    while ((fromServer = in.readLine()) != null) {
+                        System.out.println(fromServer);
+                    }
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            });
+            readerThread.start();
+
+            String userInput;
+            while ((userInput = stdIn.readLine()) != null) {
+                out.println(userInput);
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    static class ClientHandler implements Runnable {
+        private final Socket clientSocket;
+        private PrintWriter out;
+        private BufferedReader in;
+        private String username;
+
+        public ClientHandler(Socket clientSocket) {
+            this.clientSocket = clientSocket;
+        }
+
+        @Override
+        public void run() {
+            try {
+                in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
+                out = new PrintWriter(clientSocket.getOutputStream(), true);
+                this.username = in.readLine();
+
+                String message;
+                while ((message = in.readLine()) != null) {
+                    broadcastMessage(this.username + ": " + message);
+                }
+            } catch (IOException e) {
+                e.printStackTrace();
+            } finally {
+                try {
+                    clientSocket.close();
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+                clientHandlers.remove(this);
+                broadcastMessage(this.username + " đã rời khỏi phòng chat.");
+            }
+        }
+
+        private void broadcastMessage(String message) {
+            synchronized (clientHandlers) {
+                for (ClientHandler handler : clientHandlers) {
+                    handler.out.println(message);
+                }
+            }
+        }
+    }
+}
